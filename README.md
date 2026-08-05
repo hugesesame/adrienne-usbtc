@@ -10,6 +10,8 @@ version. The USB protocol is undocumented. This repository documents it.
 **Have one of these readers? [Open it in your browser.](https://hugesesame.github.io/adrienne-usbtc/)**
 Nothing to install, no driver, any OS — Chrome or Edge required.
 
+[![The browser reader displaying timecode 06:59:52:07 at 30.00 fps](docs/screenshot.png)](https://hugesesame.github.io/adrienne-usbtc/)
+
 > 日本語版は [README.ja.md](README.ja.md) を参照してください。
 
 ---

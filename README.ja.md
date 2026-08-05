@@ -10,6 +10,8 @@ USB プロトコルも非公開。本リポジトリはそれを文書化した�
 **実機をお持ちなら [ブラウザで開いてください](https://hugesesame.github.io/adrienne-usbtc/)。**
 インストール不要、ドライバ不要、OS も問わない（Chrome / Edge が必要）。
 
+[![ブラウザ実装がタイムコード 06:59:52:07 を 30.00 fps で表示している様子](docs/screenshot.png)](https://hugesesame.github.io/adrienne-usbtc/)
+
 > English version: [README.md](README.md)
 
 ---
