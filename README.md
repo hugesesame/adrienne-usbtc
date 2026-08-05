@@ -1,0 +1,418 @@
+# Adrienne USB-TC — Register Map & Cross-Platform Reader
+
+Reverse-engineered USB protocol for the **Adrienne Electronics USB-TC** family of
+SMPTE/EBU timecode readers, plus a working Python reader for macOS and Linux.
+
+The vendor ships Windows-only drivers and has never released a macOS or Linux
+version. The USB protocol is undocumented. This repository documents it.
+
+> 日本語版は [README.ja.md](README.ja.md) を参照してください。
+
+---
+
+## Why this exists
+
+The USB-TC series (`USB-LTC/RDR`, `USB-21VL/RDR`, `USB-IRIG/RDR`) are compact,
+well-built hardware timecode readers. Units manufactured in the mid-2000s are
+still perfectly functional, but the only way to talk to them is a Windows `.sys`
+driver and a closed SDK DLL.
+
+There is no technical reason for that limitation. The device is a
+vendor-specific USB peripheral with firmware resident on board — no host-side
+firmware upload, no kernel driver required. Any platform with libusb can drive
+it directly from user space.
+
+This document is the missing piece: the protocol and the register map.
+
+---
+
+## Device identification
+
+```
+idVendor        0xAECB      ("AECB" — an Adrienne Electronics vanity ID)
+idProduct       0x6600
+bDeviceClass    0xFF        vendor-specific
+bDeviceSubClass 0xFF
+bDeviceProtocol 0xFF
+bcdUSB          0x0110      USB 1.1
+bMaxPacketSize0 8
+bMaxPower       100 mA, bus powered
+Speed           Full Speed (12 Mbps)
+Product string  "AEC USB-TC Time Code and L21 Data Reader"
+```
+
+Because the device class is `0xFF` at the device level, **no kernel driver on
+any platform will claim it**. On macOS and Linux the interface is left
+unclaimed, which makes libusb access straightforward and also satisfies the
+requirements for **WebUSB**.
+
+---
+
+## Interface layout
+
+A single interface with **three alternate settings**:
+
+| alt | Endpoints | bInterval | `iInterface` string |
+|-----|-----------|-----------|---------------------|
+| 0 | none | — | `Default 0KB/s Interface` |
+| 1 | IN `0x81` / OUT `0x01`, 16 bytes each | 8 | `Alternate 1KB/s Interface` |
+| 2 | IN `0x81` / OUT `0x01`, 16 bytes each | 1 | `Alternate 10KB/s Interface` |
+
+Both endpoints are **interrupt** transfers with `wMaxPacketSize = 16`.
+
+### Pitfall 1 — the device starts with no endpoints
+
+**The device enumerates in alt 0, which exposes no endpoints.**
+
+Calling `set_configuration()` alone leaves you in alt 0. Any attempt to read
+endpoint `0x81` then fails with `Invalid endpoint address 0x81` (or the
+equivalent on your stack). You must explicitly select an alternate setting:
+
+```python
+dev.set_interface_altsetting(interface=0, alternate_setting=1)
+```
+
+Alt 1 (8 ms polling) is more than sufficient for 30 fps timecode. Alt 2 (1 ms)
+is presumably intended for field-rate VITC or Line 21 caption data.
+
+Note that the Windows driver performs this selection inside
+`URB_FUNCTION_SELECT_CONFIGURATION`, so a `SET_INTERFACE` request does **not**
+appear as a standalone control transfer in a USB capture. Do not conclude from
+its absence that alt selection is unnecessary.
+
+### Pitfall 2 — the first transaction returns nothing
+
+**The first transaction after enumeration returns an empty response.** Issue a
+throwaway read and discard the result before doing anything meaningful. The
+vendor driver makes three redundant identify calls at startup for what appears
+to be exactly this reason.
+
+---
+
+## Protocol
+
+This is **not** a command-oriented device. It exposes a **128-byte register
+space** that the host reads and writes.
+
+```
+OUT ep 0x01 : 74 <addr>          read  — returns 4 bytes starting at addr
+              61 <addr> <val>    write — stores val at addr
+IN  ep 0x81 : 10 bytes
+```
+
+`0x74` is ASCII `'t'`; `0x61` is ASCII `'a'`.
+
+### Response format
+
+```
+74 10 14 42 59 06 00 00 00 00
+└──┬──┘ └─────┬─────┘ └───┬───┘
+  echo    4 bytes from    padding
+          addr            (always zero)
+```
+
+| Byte | Contents |
+|------|----------|
+| 0 | opcode echo |
+| 1 | address echo |
+| 2 | `mem[addr]` |
+| 3 | `mem[addr+1]` |
+| 4 | `mem[addr+2]` |
+| 5 | `mem[addr+3]` |
+| 6–9 | **padding — always zero** |
+
+The register model is unmistakable once you sweep the address space: responses
+slide by one byte as the address increments.
+
+```
+74 00  ->  CB AE 00 66
+74 01  ->     AE 00 66 00
+74 02  ->        00 66 00 00
+74 03  ->           66 00 00 42
+```
+
+### Error responses
+
+| Response | Meaning |
+|----------|---------|
+| `F0 00 00 ...` | **Malformed command** — e.g. a 1-byte write to the OUT endpoint |
+| `F5 00 00 ...` | **Address out of range** — `0x7D` and above overrun the 128-byte space |
+
+If you are probing blind and every value returns `F0`, your command *length* is
+wrong, not your opcode. This is worth knowing: a one-byte probe sweep produces
+`F0` for all 256 values and tells you nothing.
+
+---
+
+## Register map
+
+Verified against three captured states: no signal, LTC running, LTC stopped.
+
+| Address | Contents | Confidence |
+|---------|----------|------------|
+| `0x00–0x01` | **USB vendor ID**, little-endian (`CB AE` = 0xAECB) | confirmed |
+| `0x02–0x03` | **USB product ID**, little-endian (`00 66` = 0x6600) | confirmed |
+| `0x04–0x05` | zero — unused? | — |
+| `0x06–0x07` | **Firmware revision**, ASCII (`42 31` = `"B1"`) | confirmed |
+| `0x08–0x0B` | Capability / model information | **not decoded** |
+| `0x0C` | **Status — bit 4 set while LTC is being received** | high |
+| `0x0D` | Toggles on read; heartbeat rather than data | medium |
+| `0x0E` | `0x01` once a signal has been seen | medium |
+| `0x0F` | Constant `0x74` | — |
+| `0x10` | **Timecode frames** (packed BCD) | confirmed |
+| `0x11` | **Timecode seconds** (packed BCD) | confirmed |
+| `0x12` | **Timecode minutes** (packed BCD) | confirmed |
+| `0x13` | **Timecode hours** (packed BCD) | confirmed |
+| `0x14–0x17` | Zero in every capture; **likely user bits** | unverified |
+| `0x19` | Status — bit 7 flags a newly arrived frame; bits 6 and 0 always set | medium |
+| `0x1A` | **7-bit free-running frame counter**, wraps at `0x7F` | high |
+| `0x2C` | **Control register** — write `0x02` to enable the reader | confirmed |
+| `0x4C` | Timing/phase measurement; cycles through a repeating set | low |
+| others | zero | — |
+
+### Observed behaviour by state
+
+```
+              0x0C        0x0D       0x19          0x1A       0x4C
+LTC running   00010010    toggles    11000001 /    counting   cycling
+                                     01000001
+LTC stopped   00000010    toggles    01000001      frozen     0x08
+No signal     00000010    toggles    00000000      0x00       0x28
+```
+
+The `0x1A` counter advances by 4–5 per polling pass. At roughly 60 ms per pass
+and 33 ms per frame at 30 fps, that is exactly right.
+
+### Timecode is BCD
+
+Values at `0x10–0x13` are **packed BCD**, not binary. Frame counts advance
+`0x18 → 0x20`, never `0x19 → 0x1A`. Byte `0x10` takes exactly 30 distinct
+values across a 30 fps capture.
+
+The frames → seconds → minutes → hours ordering is **identical to the serial
+message format Adrienne published for the AEC-BOX-1/2/10/20 standalone readers**
+in the late 1990s. The vendor carried its data layout forward unchanged into the
+USB generation. That published specification is what made this protocol
+tractable; if you are reverse-engineering another device in this family, read it
+first — it is still available at `adrielec.com/box20lit.htm`.
+
+### No-signal behaviour
+
+**When the LTC input drops, the timecode registers do not report an error. They
+retain the last value the device decoded.**
+
+In one capture, `02:59:14:20` was returned unchanged for 7.36 seconds across 157
+polls while the LTC source was stopped, then resumed counting on restoration.
+
+Do not detect this with a staleness timeout. **Read the lock bit at `0x0C`
+instead** — it is a hardware flag, so it responds immediately and correctly
+distinguishes a paused source from an absent one.
+
+### Vendor driver initialisation sequence
+
+```
+(USB standard)  GET_DESCRIPTOR device
+(USB standard)  GET_DESCRIPTOR configuration
+(USB standard)  SET_CONFIGURATION 1
+74 00           read 0x00   (identify)
+74 08           read 0x08   (capabilities)
+74 00           read 0x00   (repeat)
+74 00           read 0x00   (repeat)
+74 04           read 0x04   (firmware revision region)
+74 08           read 0x08   (repeat)
+61 2C 02        write 0x02 to 0x2C   -- enables the reader
+74 10 ...       poll 0x10, approximately every 47 ms
+```
+
+A minimal client needs only the throwaway read, `61 2C 02`, and then polling.
+
+---
+
+## Usage
+
+### Requirements
+
+- libusb 1.0
+- Python 3 with pyusb
+
+```bash
+# macOS
+brew install libusb
+
+# Debian / Ubuntu
+sudo apt install libusb-1.0-0
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install pyusb
+```
+
+### Run
+
+```bash
+python usbtc_reader.py
+```
+
+```
+device    : 0xaecb:0x6600
+firmware  : B1
+caps      : 54 00 80 04
+reader started -- Ctrl+C to stop
+
+06:59:49:02
+```
+
+`[NO SIGNAL]` appears when the lock bit is clear.
+
+### As a library
+
+```python
+from usbtc_reader import UsbTc
+
+with UsbTc() as tc:
+    tc.start()
+    if tc.locked():
+        hh, mm, ss, ff = tc.read_timecode()
+        print(f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}")
+
+    # raw register access
+    print(tc.read(0x10, 4).hex(" "))
+    print(tc.dump().hex(" "))       # full 128-byte space
+```
+
+**Use the context manager.** The device must be released cleanly; a process
+that dies holding the interface can leave it unusable until it is physically
+unplugged. `UsbTc` also attempts a `reset()` and one retry if it finds the
+interface already claimed.
+
+### Linux permissions
+
+```
+# /etc/udev/rules.d/99-usbtc.rules
+SUBSYSTEM=="usb", ATTRS{idVendor}=="aecb", ATTRS{idProduct}=="6600", MODE="0666"
+```
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `No backend available` | `export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH` (macOS) |
+| `Access denied` | Run with `sudo` using the venv interpreter by absolute path, or add the udev rule |
+| `Invalid endpoint address 0x81` | You skipped `set_interface_altsetting` |
+| `[Errno 5] Input/Output Error` | A previous process did not release the interface. `UsbTc` retries with a reset; if that fails, unplug and reconnect |
+| Identify returns `0x0000:0x0000` | You skipped the throwaway first read |
+| `system_profiler SPUSBDataType` prints nothing | Known quirk on Apple Silicon; use `ioreg -p IOUSB -l -w 0` |
+
+---
+
+## Status and known gaps
+
+**Working:** device identification, firmware revision, LTC timecode, lock
+detection, frame counter, arbitrary register read/write.
+
+**Not yet decoded:**
+
+- **Drop-frame and colour-frame flags.** The AEC-BOX message format carried
+  both. They are presumably in the unexplained bits of `0x19` or in
+  `0x08–0x0B`, but no DF source has been tested against this device yet.
+- **Frame rate determination** (30 / 25 / 24 fps). Only 30 fps has been tested.
+- **Transport status** — direction, play / fast-forward / slow / stopped.
+- **User bits.** `0x14–0x17` is the obvious candidate but reads zero in every
+  capture, because no source transmitting user bits has been tested.
+- **`0x08–0x0B`** (`54 00 80 04`) — capability or model identification.
+- **VITC** and **Line 21 / closed caption** data on the `USB-21VL/RDR`. These
+  require an NTSC video signal on the VIDEO BNC input.
+- **Writable registers other than `0x2C`.** Unexplored, and risky to probe.
+
+### Contributing
+
+The register space is only 128 bytes, so mapping is tractable:
+
+```python
+from usbtc_reader import UsbTc
+
+with UsbTc() as tc:
+    tc.start()
+    mem = tc.dump()
+    print(mem.hex(" "))
+```
+
+The productive method is **differential**: capture a full dump in two states
+that differ in exactly one variable, then diff them. Isolating no-signal /
+running / stopped is what identified the lock bit and the frame counter.
+
+Captures and decodes are very welcome, particularly from anyone who can supply
+drop-frame timecode, 25 or 24 fps sources, user bits, VITC, or an
+`USB-IRIG/RDR`.
+
+Be aware that write commands to undocumented registers may change device state
+in ways this driver does not understand. Dump the full register space first so
+you can tell what moved.
+
+---
+
+## Method
+
+The protocol was recovered in two stages.
+
+**Stage 1 — USB capture.** Traffic between the vendor's Windows demo
+application and the device was captured with USBPcap and correlated against
+known timecode values. This established the two-byte command format and the BCD
+layout.
+
+**Stage 2 — address sweep.** Sweeping the second byte across `0x00–0xFF`
+revealed that responses slide by one byte per increment — the second byte is an
+*address*, not a subcommand. What had looked like a "read timecode command" was
+simply a read of address `0x10`. Differential dumps across signal states then
+filled in the status bits.
+
+Reproducing the capture:
+
+1. Install Wireshark with the **USBPcap** component selected (it is off by
+   default), then reboot — USBPcap is a kernel driver.
+2. Run Wireshark as Administrator and select the `USBPcap` interface
+   corresponding to the device's root hub.
+3. **Start the LTC source first**, then start the capture, then launch the
+   vendor demo application. The initialisation sequence is what matters.
+4. Stop and restart the LTC mid-capture to record the no-signal behaviour.
+
+Feed a known, round timecode value such as `01:00:00:00`. Locating a constant
+byte matching the hour immediately anchors the whole layout.
+
+Captures can be parsed directly in Python without Wireshark. The pcapng link
+type is 249 (`LINKTYPE_USBPCAP`). In the USBPcap packet header, the first two
+bytes are the header length, offset 21 is the endpoint, offset 22 the transfer
+type, offsets 23–26 the data length, and bit 0 of offset 16 is the direction
+(1 = from device).
+
+---
+
+## Roadmap
+
+**WebUSB.** Because the device is vendor-specific class, Chrome can access it
+directly with no driver shim — no WinUSB, no Zadig. A single self-contained HTML
+file could act as a hardware timecode display. `selectAlternateInterface(0, 1)`
+is required, and the page must be served over HTTPS or from localhost.
+
+**Rust / C / Node bindings.** The protocol is small enough to reimplement in an
+afternoon in any language with libusb bindings.
+
+---
+
+## Disclaimer
+
+This project is not affiliated with, endorsed by, or supported by Adrienne
+Electronics Corporation. The protocol description was derived from observation
+of publicly available software for interoperability purposes.
+
+Provided as-is, with no warranty. Probing undocumented registers carries some
+risk to any USB device; proceed accordingly.
+
+---
+
+## License
+
+MIT
