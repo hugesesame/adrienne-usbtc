@@ -354,6 +354,26 @@ register read/write.
   require an NTSC video signal on the VIDEO BNC input.
 - **Writable registers other than `0x2C`.** Unexplored, and risky to probe.
 
+### Analysis tools
+
+Three small scripts sit alongside the reader. They are what the register map
+was built with, and they are the fastest way to extend it.
+
+| Script | What it does |
+|---|---|
+| `scan.py` | Reads every address `0x00`–`0xFF` and prints the replies. This is the scan that showed `0x74` takes an address, not a subcommand number. |
+| `mapscan.py` | Dumps the whole 128-byte space to `map_<label>.txt` and prints it as a grid. |
+| `watch.py` | Prints a line whenever the watched registers change. Edit `WATCH` to follow different addresses. |
+
+```bash
+python mapscan.py nosignal      # with nothing on the LTC input
+python mapscan.py withltc       # with the source running
+diff map_nosignal.txt map_withltc.txt
+```
+
+The three `map_*.txt` files in this repository are the captures the register map
+was derived from, taken in exactly that way.
+
 ### Contributing
 
 The register space is only 128 bytes, so mapping is tractable:
@@ -370,6 +390,12 @@ with UsbTc() as tc:
 The productive method is **differential**: capture a full dump in two states
 that differ in exactly one variable, then diff them. Isolating no-signal /
 running / stopped is what identified the lock bit and the frame counter.
+
+Know what that method cannot see. A flag that reads zero in every state you
+capture leaves no trace in any diff, which is how the drop-frame bit in `0x10`
+went unnoticed until drop-frame material was finally fed in. Before concluding
+a flag must live in some unexplored register, check whether a field you already
+understand has spare bits.
 
 Captures and decodes are very welcome, particularly from anyone who can supply
 drop-frame timecode, 25 or 24 fps sources, user bits, VITC, or an

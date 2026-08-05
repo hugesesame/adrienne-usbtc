@@ -1,18 +1,35 @@
+"""Print a line whenever the watched registers change.
+
+Run this while starting and stopping the LTC source. That is how the lock bit
+at 0x0C bit 4 was identified: it is the only bit that tracks the presence of a
+signal rather than the passage of frames.
+
+Edit WATCH to follow different addresses. Anything listed in WATCH but not in
+TRIGGER is shown for context without causing a line of its own -- 0x10 holds
+the timecode frame number, so triggering on it would print on every sample and
+drown out everything else.
+"""
+
 import time
+
 from usbtc_reader import UsbTc
 
-tc = UsbTc()
-tc.start()
+WATCH = (0x0C, 0x0D, 0x10, 0x19, 0x1A, 0x4C)
+TRIGGER = (0x0C, 0x0D, 0x19, 0x1A, 0x4C)
+SAMPLES = 400
+INTERVAL = 0.05
 
-prev = None
-for i in range(400):
-    v = []
-    for a in (0x0C, 0x0D, 0x10, 0x19, 0x1A, 0x4C):
-        v.append(tc.command(bytes([0x74, a]), timeout=300)[2])
-    cur = tuple(v[0:2] + v[3:])
-    if cur != prev:
-        print("0C=%s 0D=%s  TC.f=%02X  19=%s 1A=%s  4C=%02X" % (
-            format(v[0], "08b"), format(v[1], "08b"), v[2],
-            format(v[3], "08b"), format(v[4], "08b"), v[5]))
-        prev = cur
-    time.sleep(0.05)
+with UsbTc() as tc:
+    tc.start()
+    print("  ".join(f"{addr:02X}".center(8) for addr in WATCH))
+
+    previous = None
+    for _ in range(SAMPLES):
+        values = {addr: tc.read(addr)[0] for addr in WATCH}
+        current = tuple(values[addr] for addr in TRIGGER)
+
+        if current != previous:
+            print("  ".join(f"{values[addr]:08b}" for addr in WATCH))
+            previous = current
+
+        time.sleep(INTERVAL)
