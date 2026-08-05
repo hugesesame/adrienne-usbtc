@@ -2,11 +2,12 @@
 
     python mapscan.py nosignal
     python mapscan.py withltc
-    diff map_nosignal.txt map_withltc.txt
+    diff map_unit1_nosignal.txt map_unit1_withltc.txt
 
 Capture states that differ in exactly one variable, then diff them. That is how
-the status bits at 0x0C, 0x19 and 0x1A were found, and the three map_*.txt files
-in this repository are the captures those conclusions came from.
+the status bits at 0x0C, 0x19 and 0x1A were found, and the map_*.txt files in
+this repository are the captures those conclusions came from. Diffing the two
+units against each other is also what isolated the capability flags at 0x08.
 
 Be aware of what this method cannot see: a flag that is zero in every state you
 capture leaves no trace in any diff. The drop-frame bit in 0x10 was missed for

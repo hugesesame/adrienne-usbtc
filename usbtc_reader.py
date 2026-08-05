@@ -27,8 +27,10 @@ Register map (as far as it is currently understood)
 
     0x00-0x01   USB vendor ID, little-endian
     0x02-0x03   USB product ID, little-endian
-    0x06-0x07   firmware revision, ASCII (e.g. "B1")
-    0x08-0x0B   capability / model information -- NOT DECODED
+    0x06-0x07   firmware revision, ASCII ("B1" and "C1" seen)
+    0x08        capability flags; bit 4 LTC, bits 6 and 2 the video-derived
+                features (VITC and Line 21) on video-capable units only
+    0x09-0x0B   00 80 04 on both units tested; constant, not capability bits
     0x0C        status; bit 4 set while LTC is being received
     0x0D        toggles on read; heartbeat rather than data
     0x0E        0x01 once a signal has been seen

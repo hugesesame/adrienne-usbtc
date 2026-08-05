@@ -38,13 +38,30 @@ bcdUSB          0x0110      USB 1.1
 bMaxPacketSize0 8
 bMaxPower       100 mA, bus powered
 Speed           Full Speed (12 Mbps)
-Product string  "AEC USB-TC Time Code and L21 Data Reader"
 ```
 
 Because the device class is `0xFF` at the device level, **no kernel driver on
 any platform will claim it**. On macOS and Linux the interface is left
 unclaimed, which makes libusb access straightforward and also satisfies the
 requirements for **WebUSB**.
+
+### Tested hardware
+
+Everything here has been verified against two units, which between them span
+fifteen years, two models and two firmware revisions:
+
+| Serial | Built | Product string | Inputs | Firmware | `0x08` |
+|---|---|---|---|---|---|
+| `U200406281110` | 2004-06-28 | AEC USB-TC Time Code **and L21 Data** Reader | LTC + VIDEO | `B1` | `0x54` |
+| `U201911181047` | 2019-11-18 | AEC USB-TC Time Code Reader | LTC only | `C1` | `0x10` |
+
+Both report the same `idVendor`/`idProduct` and speak the identical protocol.
+**The product ID does not distinguish the models — `0x08` does.** Anything
+identifying a variant has to come from the register space, not the USB
+descriptors.
+
+The serial number appears to encode the build date: `U` + `YYYYMMDD` + a
+sequence number.
 
 ---
 
@@ -146,15 +163,17 @@ wrong, not your opcode. This is worth knowing: a one-byte probe sweep produces
 
 ## Register map
 
-Verified against three captured states: no signal, LTC running, LTC stopped.
+Verified against three captured states — no signal, LTC running, LTC stopped —
+and cross-checked against a second unit of a different model.
 
 | Address | Contents | Confidence |
 |---------|----------|------------|
 | `0x00–0x01` | **USB vendor ID**, little-endian (`CB AE` = 0xAECB) | confirmed |
 | `0x02–0x03` | **USB product ID**, little-endian (`00 66` = 0x6600) | confirmed |
 | `0x04–0x05` | zero — unused? | — |
-| `0x06–0x07` | **Firmware revision**, ASCII (`42 31` = `"B1"`) | confirmed |
-| `0x08–0x0B` | Capability / model information | **not decoded** |
+| `0x06–0x07` | **Firmware revision**, ASCII (`"B1"` and `"C1"` seen) | confirmed |
+| `0x08` | **Capability flags.** bit 4 = LTC. bits 6 and 2 = the video-derived features, on video-capable units only | partly decoded |
+| `0x09–0x0B` | `00 80 04` on both units tested; constant, not capability bits | — |
 | `0x0C` | **Status — bit 4 set while LTC is being received** | high |
 | `0x0D` | Toggles on read; heartbeat rather than data | medium |
 | `0x0E` | `0x01` once a signal has been seen | medium |
@@ -188,6 +207,27 @@ and 33 ms per frame at 30 fps, that is exactly right.
 Values at `0x10–0x13` are **packed BCD**, not binary. Frame counts advance
 `0x18 → 0x20`, never `0x19 → 0x1A`. Byte `0x10` takes exactly 30 distinct
 values across a 30 fps capture.
+
+### Capability flags at `0x08`
+
+Comparing the two units in [Tested hardware](#tested-hardware) isolates this
+byte. It is the only difference between them that means anything — `0x06` holds
+the firmware letter and `0x0D` is a heartbeat that changes on every read.
+
+```
+LTC + VIDEO unit   0x54 = 0101 0100    bit 6, bit 4, bit 2
+LTC-only unit      0x10 = 0001 0000           bit 4
+```
+
+- **bit 4 — LTC.** Both units set it and both read LTC.
+- **bits 6 and 2 — the video-derived features**, i.e. VITC and Line 21. Only the
+  unit with a VIDEO BNC sets them; the LTC-only unit has no video connector at
+  all, so it cannot support either.
+
+Which of the two is VITC and which is Line 21 cannot be settled with these
+units, because the one that has them has both. A model carrying VITC without
+Line 21 would separate them immediately — if you own one, a single
+`python mapscan.py yourlabel` would close this out.
 
 ### Mask the flag bits before unpacking
 
@@ -349,9 +389,11 @@ register read/write.
 - **Transport status** — direction, play / fast-forward / slow / stopped.
 - **User bits.** `0x14–0x17` is the obvious candidate but reads zero in every
   capture, because no source transmitting user bits has been tested.
-- **`0x08–0x0B`** (`54 00 80 04`) — capability or model identification.
-- **VITC** and **Line 21 / closed caption** data on the `USB-21VL/RDR`. These
-  require an NTSC video signal on the VIDEO BNC input.
+- **Which of `0x08` bit 6 and bit 2 is VITC and which is Line 21.** Both are
+  set on the video-capable unit and clear on the LTC-only one, so the two
+  cannot be told apart without a model that has one feature and not the other.
+- **VITC** and **Line 21 / closed caption** data. The video-capable unit above
+  has the VIDEO BNC for both; what is missing is an NTSC source to feed it.
 - **Writable registers other than `0x2C`.** Unexplored, and risky to probe.
 
 ### Analysis tools
@@ -368,7 +410,7 @@ was built with, and they are the fastest way to extend it.
 ```bash
 python mapscan.py nosignal      # with nothing on the LTC input
 python mapscan.py withltc       # with the source running
-diff map_nosignal.txt map_withltc.txt
+diff map_unit1_nosignal.txt map_unit1_withltc.txt
 ```
 
 The three `map_*.txt` files in this repository are the captures the register map
@@ -398,8 +440,11 @@ a flag must live in some unexplored register, check whether a field you already
 understand has spare bits.
 
 Captures and decodes are very welcome, particularly from anyone who can supply
-drop-frame timecode, 25 or 24 fps sources, user bits, VITC, or an
-`USB-IRIG/RDR`.
+25 or 24 fps sources, user bits, VITC, or an `USB-IRIG/RDR`.
+
+One capture in particular would settle an open question in a single command: a
+`mapscan.py` dump from **any unit that reads VITC but not Line 21**. That
+separates bits 6 and 2 of `0x08`, which the two units here cannot.
 
 Be aware that write commands to undocumented registers may change device state
 in ways this driver does not understand. Dump the full register space first so
