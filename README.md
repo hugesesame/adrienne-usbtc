@@ -332,15 +332,20 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Status and known gaps
 
-**Working:** device identification, firmware revision, LTC timecode, lock
-detection, frame counter, arbitrary register read/write.
+**Working:** device identification, firmware revision, LTC timecode,
+drop-frame and colour-frame flags, lock detection, frame counter, arbitrary
+register read/write.
 
 **Not yet decoded:**
 
-- **Drop-frame and colour-frame flags.** The AEC-BOX message format carried
-  both. They are presumably in the unexplained bits of `0x19` or in
-  `0x08–0x0B`, but no DF source has been tested against this device yet.
-- **Frame rate determination** (30 / 25 / 24 fps). Only 30 fps has been tested.
+- **A frame-rate field**, if one exists at all. Nothing in the register space
+  is known to report 30 / 25 / 24 fps directly. In practice this does not
+  block anything: the rate can be measured, and measuring is the only way to
+  separate 29.97 from 30.00 regardless, since both label frames 0–29. Fit a
+  line through `Timecode.frame_number()` against wall-clock time over a rolling
+  window — differencing just the endpoints leaves a plus or minus one frame
+  quantisation error, which is far too coarse for a 0.1% difference. Only
+  30 fps material has been tested against the device so far.
 - **Transport status** — direction, play / fast-forward / slow / stopped.
 - **User bits.** `0x14–0x17` is the obvious candidate but reads zero in every
   capture, because no source transmitting user bits has been tested.
@@ -414,10 +419,24 @@ type, offsets 23–26 the data length, and bit 0 of offset 16 is the direction
 
 ## Roadmap
 
-**WebUSB.** Because the device is vendor-specific class, Chrome can access it
-directly with no driver shim — no WinUSB, no Zadig. A single self-contained HTML
-file could act as a hardware timecode display. `selectAlternateInterface(0, 1)`
-is required, and the page must be served over HTTPS or from localhost.
+**WebUSB — confirmed working.** Because the device is vendor-specific class,
+Chrome reaches it directly with no driver shim: no WinUSB, no Zadig. A single
+self-contained HTML file really does work as a hardware timecode display; one
+has been built and run against this device on macOS. The absence of a macOS
+driver, the thing that made this project necessary, is exactly what makes the
+browser path frictionless.
+
+Three things worth knowing before you build one:
+
+- `selectAlternateInterface(0, 1)` is required, for the reason in pitfall 1.
+- The warm-up transaction from pitfall 2 is required too. Without it the first
+  register read returns an empty packet and the connection appears to fail.
+- A `file://` page is enough — Chrome treats it as a potentially trustworthy
+  origin, so WebUSB is available with no server at all. Note that permission is
+  remembered per origin, so `file://` and `http://localhost:8000` are granted
+  separately; and once an origin has been granted a device, that device stops
+  appearing in the chooser. Call `navigator.usb.getDevices()` and reuse the
+  granted handle rather than prompting again, or the app will look broken.
 
 **Rust / C / Node bindings.** The protocol is small enough to reimplement in an
 afternoon in any language with libusb bindings.
