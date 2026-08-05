@@ -46,6 +46,19 @@ bMaxPower       100 mA、バスパワー
 速度            フルスピード (12 Mbps)
 ```
 
+挿してみたら正体不明のデバイスが出てきた、という経緯でここに辿り着いた場合、
+見ているのはこれである。
+
+```
+$ lsusb
+Bus 001 Device 007: ID aecb:6600 Adrienne Electronics Corporation
+                                 AEC USB-TC Time Code Reader
+```
+
+製品文字列は機種で異なる。LTC 専用機は `AEC USB-TC Time Code Reader`、
+ビデオ対応機は `AEC USB-TC Time Code and L21 Data Reader`。macOS なら
+`ioreg -p IOUSB -l -w 0`、Windows ならデバイスマネージャーで同じ情報が見られる。
+
 デバイスレベルで `bDeviceClass = 0xFF` が立っているため、**どのプラットフォーム
 のカーネルドライバもこのデバイスを掴まない**。macOS や Linux ではインターフェース
 が未使用のまま残るので、libusb からのアクセスが容易であり、同時に **WebUSB** の
@@ -307,6 +320,12 @@ WebUSB でデバイスを直接読み、タイムコードを全画面表示す�
 
 **Chrome または Edge が必要。** Safari は WebUSB 非対応、Firefox は実装しない
 方針を表明しているため、どちらでも動かない。今後もこの状況は変わらないと思われる。
+
+**Windows でも、単なる Mac の代用ではなく純正ドライバを迂回する手段になる。**
+純正の `.sys` ドライバは古い Windows 世代のもので、年々遠ざかっている。本ページは
+それに一切依存せず、ブラウザがデバイスに直接到達する。WinUSB や Zadig のシムも
+挟まない。**Windows のアップグレード後に USB-TC が動かなくなった場合**、他の手を
+打つ前にまず上のリーダーを試す価値がある。
 
 実体は [`docs/index.html`](docs/index.html) の1ファイル。接続できないときの
 切り分け用に [`docs/diag.html`](docs/diag.html) も置いてある。どちらも依存関係の

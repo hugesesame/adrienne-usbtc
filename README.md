@@ -46,6 +46,20 @@ bMaxPower       100 mA, bus powered
 Speed           Full Speed (12 Mbps)
 ```
 
+If you arrived here after plugging one in and finding an unidentified device,
+this is what you are looking at:
+
+```
+$ lsusb
+Bus 001 Device 007: ID aecb:6600 Adrienne Electronics Corporation
+                                 AEC USB-TC Time Code Reader
+```
+
+The product string differs between models — `AEC USB-TC Time Code Reader` on
+LTC-only units, `AEC USB-TC Time Code and L21 Data Reader` on video-capable
+ones. On macOS the same information comes from `ioreg -p IOUSB -l -w 0`, and on
+Windows from Device Manager.
+
 Because the device class is `0xFF` at the device level, **no kernel driver on
 any platform will claim it**. On macOS and Linux the interface is left
 unclaimed, which makes libusb access straightforward and also satisfies the
@@ -311,6 +325,12 @@ page, click **Connect Device**, pick the reader.
 
 Requires **Chrome or Edge**. Safari does not support WebUSB and Firefox has
 declined to implement it, so neither will work and that is unlikely to change.
+
+**On Windows this is a way around the vendor driver, not just a Mac substitute.**
+The stock `.sys` driver dates from an era of Windows that keeps receding, and
+nothing here depends on it — the browser reaches the device directly, with no
+WinUSB or Zadig shim in between. If your USB-TC stopped working after a Windows
+upgrade, the reader above is worth trying before anything else.
 
 The page is [`docs/index.html`](docs/index.html), and
 [`docs/diag.html`](docs/diag.html) is a diagnostic page for when the device will

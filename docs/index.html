@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LTC Reader — AEC USB-TC</title>
+<title>Adrienne USB-TC Timecode Reader — macOS, Windows, Linux, no driver</title>
+<meta name="description" content="Read SMPTE/EBU LTC timecode from an Adrienne Electronics USB-TC (USB ID aecb:6600) in the browser over WebUSB. Works on macOS, Windows and Linux with no vendor driver installed. Shows drop frame and the measured frame rate.">
+<link rel="canonical" href="https://hugesesame.github.io/adrienne-usbtc/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hugesesame.github.io/adrienne-usbtc/">
+<meta property="og:title" content="LTC Timecode Reader for the Adrienne USB-TC">
+<meta property="og:description" content="Reads an Adrienne Electronics USB-TC over WebUSB — macOS, Windows and Linux, with no vendor driver installed.">
+<meta property="og:image" content="https://hugesesame.github.io/adrienne-usbtc/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hugesesame.github.io/adrienne-usbtc/screenshot.png">
 <style>
   :root {
     --primary:            #0066cc;
@@ -202,7 +211,9 @@
   </p>
 
   <p class="note colophon">
-    Reads an <b>Adrienne Electronics USB-TC</b> over WebUSB.
+    Reads SMPTE/EBU LTC timecode from an <b>Adrienne Electronics USB-TC</b>
+    (USB ID <code>aecb:6600</code>) over WebUSB — on macOS, Windows or Linux,
+    with no vendor driver installed.
     Protocol notes, a Python reader and the source for this page:
     <a href="https://github.com/hugesesame/adrienne-usbtc">github.com/hugesesame/adrienne-usbtc</a>.
     Provided as-is, with no warranty and no promise of support.
