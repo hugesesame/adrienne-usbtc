@@ -159,10 +159,10 @@ Verified against three captured states: no signal, LTC running, LTC stopped.
 | `0x0D` | Toggles on read; heartbeat rather than data | medium |
 | `0x0E` | `0x01` once a signal has been seen | medium |
 | `0x0F` | Constant `0x74` | — |
-| `0x10` | **Timecode frames** (packed BCD) | confirmed |
-| `0x11` | **Timecode seconds** (packed BCD) | confirmed |
-| `0x12` | **Timecode minutes** (packed BCD) | confirmed |
-| `0x13` | **Timecode hours** (packed BCD) | confirmed |
+| `0x10` | **Timecode frames**; BCD in bits 0–5, bit 6 **drop frame**, bit 7 colour frame | confirmed |
+| `0x11` | **Timecode seconds**; BCD in bits 0–6, bit 7 polarity correction | confirmed |
+| `0x12` | **Timecode minutes**; BCD in bits 0–6, bit 7 binary group flag | confirmed |
+| `0x13` | **Timecode hours**; BCD in bits 0–5, bits 6–7 binary group flags | confirmed |
 | `0x14–0x17` | Zero in every capture; **likely user bits** | unverified |
 | `0x19` | Status — bit 7 flags a newly arrived frame; bits 6 and 0 always set | medium |
 | `0x1A` | **7-bit free-running frame counter**, wraps at `0x7F` | high |
@@ -188,6 +188,27 @@ and 33 ms per frame at 30 fps, that is exactly right.
 Values at `0x10–0x13` are **packed BCD**, not binary. Frame counts advance
 `0x18 → 0x20`, never `0x19 → 0x1A`. Byte `0x10` takes exactly 30 distinct
 values across a 30 fps capture.
+
+### Mask the flag bits before unpacking
+
+`0x10–0x13` are the **raw SMPTE words**, not decoded BCD. Each byte carries
+digits *and* flag bits, so the flags have to be masked off first.
+
+| Byte | Mask | Upper bits |
+|---|---|---|
+| `0x10` frames | `& 0x3F` | bit 6 = **drop frame**, bit 7 = colour frame |
+| `0x11` seconds | `& 0x7F` | bit 7 = polarity correction |
+| `0x12` minutes | `& 0x7F` | bit 7 = binary group flag |
+| `0x13` hours | `& 0x3F` | bits 6–7 = binary group flags |
+
+Skip the mask and drop-frame material reads frame 29 as `0x40 | 0x29 = 0x69`,
+which unpacks as "69".
+
+These flags are **invisible in a non-drop capture** — every upper bit is zero,
+so no amount of diffing the dumps in this repository would have revealed them.
+They only appear once drop-frame material is fed in. If a field looks fully
+decoded, check whether it has spare bits before concluding a flag lives
+somewhere else.
 
 The frames → seconds → minutes → hours ordering is **identical to the serial
 message format Adrienne published for the AEC-BOX-1/2/10/20 standalone readers**
@@ -271,8 +292,9 @@ from usbtc_reader import UsbTc
 with UsbTc() as tc:
     tc.start()
     if tc.locked():
-        hh, mm, ss, ff = tc.read_timecode()
-        print(f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}")
+        t = tc.read_timecode()
+        print(t)                    # 01:23:45;12 -- semicolon means drop frame
+        print(t.hh, t.mm, t.ss, t.ff, t.drop_frame, t.color_frame)
 
     # raw register access
     print(tc.read(0x10, 4).hex(" "))

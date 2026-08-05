@@ -32,10 +32,11 @@ Register map (as far as it is currently understood)
     0x0C        status; bit 4 set while LTC is being received
     0x0D        toggles on read; heartbeat rather than data
     0x0E        0x01 once a signal has been seen
-    0x10        timecode frames   (packed BCD)
-    0x11        timecode seconds  (packed BCD)
-    0x12        timecode minutes  (packed BCD)
-    0x13        timecode hours    (packed BCD)
+    0x10        timecode frames;  BCD in bits 0-5, bit 6 drop frame,
+                                  bit 7 colour frame
+    0x11        timecode seconds; BCD in bits 0-6, bit 7 polarity correction
+    0x12        timecode minutes; BCD in bits 0-6, bit 7 binary group flag
+    0x13        timecode hours;   BCD in bits 0-5, bits 6-7 binary group flags
     0x14-0x17   zero in all captures so far; likely user bits, UNVERIFIED
     0x19        status; bit 7 flags a new frame, bits 6 and 0 always set
     0x1A        7-bit free-running frame counter, wraps at 0x7F
@@ -51,6 +52,11 @@ Two behaviours will cost you time if you write your own client:
   * The first transaction after enumeration returns an empty response. The
     vendor driver issues redundant identify calls for exactly this reason.
 
+  * 0x10-0x13 are the raw SMPTE words, not decoded BCD. The digits share each
+    byte with flag bits, so they must be masked before unpacking. Skip this
+    and drop-frame material reads frame 29 as 0x40|0x29 = 0x69, i.e. "69".
+    The flags are invisible in a non-drop capture because they are all zero.
+
 Note that with no LTC present the device does not report an error on the
 timecode registers -- it keeps returning the last value it decoded. Use the
 lock bit at 0x0C rather than watching for the value to stop changing.
@@ -62,6 +68,7 @@ License: MIT
 """
 
 import time
+from typing import NamedTuple
 
 import usb.core
 import usb.util
@@ -90,6 +97,14 @@ ADDR_CONTROL  = 0x2C
 STATUS_LOCKED = 0x10  # 0x0C bit 4 -- LTC currently being received
 CONTROL_RUN   = 0x02  # value the vendor driver writes to 0x2C
 
+# 0x10-0x13 carry BCD digits and flag bits in the same byte.
+MASK_FRAMES      = 0x3F
+MASK_SECONDS     = 0x7F
+MASK_MINUTES     = 0x7F
+MASK_HOURS       = 0x3F
+FLAG_DROP_FRAME  = 0x40  # frames byte, bit 6
+FLAG_COLOR_FRAME = 0x80  # frames byte, bit 7
+
 ADDR_MAX = 0x7C  # highest address a 4-byte read can start from
 
 POLL_INTERVAL = 0.02  # vendor driver polled at ~47ms; 20ms oversamples 30fps
@@ -103,6 +118,36 @@ def bcd(b):
     """Unpack a packed-BCD byte. Returns None if either nibble is invalid."""
     hi, lo = b >> 4, b & 0x0F
     return None if hi > 9 or lo > 9 else hi * 10 + lo
+
+
+class Timecode(NamedTuple):
+    """One decoded timecode reading, with the flags that came with it."""
+
+    hh: int
+    mm: int
+    ss: int
+    ff: int
+    drop_frame: bool
+    color_frame: bool
+
+    def __str__(self):
+        # Drop-frame is conventionally written with a semicolon before frames.
+        sep = ";" if self.drop_frame else ":"
+        return f"{self.hh:02d}:{self.mm:02d}:{self.ss:02d}{sep}{self.ff:02d}"
+
+    def frame_number(self, nominal):
+        """Frames elapsed since 00:00:00:00, as physically counted.
+
+        Drop-frame skips two labels a minute (nine minutes in ten) so that
+        timecode tracks real time; those skipped labels are subtracted here.
+        Without that correction a drop-frame source measures 30.00 fps rather
+        than 29.97, because its *labels* advance at 30.00 per real second.
+        """
+        minutes = self.hh * 60 + self.mm
+        n = (minutes * 60 + self.ss) * nominal + self.ff
+        if self.drop_frame and nominal == 30:
+            n -= 2 * (minutes - minutes // 10)
+        return n
 
 
 class UsbTc:
@@ -251,16 +296,26 @@ class UsbTc:
         return self.read(ADDR_FRAMECTR)[0] & 0x7F
 
     def read_timecode(self):
-        """Return (hh, mm, ss, ff), or None if the registers hold invalid BCD.
+        """Return a Timecode, or None if the registers hold invalid BCD.
+
+        The registers are raw SMPTE words: each byte carries BCD digits plus
+        flag bits, so the flags are masked off here. Reading them unmasked is
+        the classic mistake -- drop-frame material sets bit 6 of the frames
+        byte, turning frame 29 into 0x69, which unpacks as "69".
 
         The value returned is whatever the device last decoded; it does not
         go stale on its own. Check locked() to know whether it is live.
         """
         r = self.read(ADDR_TIMECODE, 4)
-        ff, ss, mm, hh = bcd(r[0]), bcd(r[1]), bcd(r[2]), bcd(r[3])
+        ff = bcd(r[0] & MASK_FRAMES)
+        ss = bcd(r[1] & MASK_SECONDS)
+        mm = bcd(r[2] & MASK_MINUTES)
+        hh = bcd(r[3] & MASK_HOURS)
         if None in (ff, ss, mm, hh):
             return None
-        return hh, mm, ss, ff
+        return Timecode(hh, mm, ss, ff,
+                        drop_frame=bool(r[0] & FLAG_DROP_FRAME),
+                        color_frame=bool(r[0] & FLAG_COLOR_FRAME))
 
     def read_userbits(self):
         """Return the 4 bytes at 0x14.
@@ -295,10 +350,9 @@ def main():
                     time.sleep(POLL_INTERVAL)
                     continue
 
-                hh, mm, ss, ff = got
                 flag = "            " if live else "  [NO SIGNAL]"
-                print(f"\r{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}{flag}",
-                      end="", flush=True)
+                mode = "  DF" if got.drop_frame else "    "
+                print(f"\r{got}{mode}{flag}", end="", flush=True)
                 time.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             print("\nstopped")
