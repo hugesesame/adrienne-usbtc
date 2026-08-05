@@ -1,10 +1,14 @@
 # Adrienne USB-TC — Register Map & Cross-Platform Reader
 
 Reverse-engineered USB protocol for the **Adrienne Electronics USB-TC** family of
-SMPTE/EBU timecode readers, plus a working Python reader for macOS and Linux.
+SMPTE/EBU timecode readers, with a Python reader for macOS and Linux and a
+browser-based reader that needs no installation at all.
 
 The vendor ships Windows-only drivers and has never released a macOS or Linux
 version. The USB protocol is undocumented. This repository documents it.
+
+**Have one of these readers? [Open it in your browser.](https://hugesesame.github.io/adrienne-usbtc/)**
+Nothing to install, no driver, any OS — Chrome or Edge required.
 
 > 日本語版は [README.ja.md](README.ja.md) を参照してください。
 
@@ -289,6 +293,53 @@ A minimal client needs only the throwaway read, `61 2C 02`, and then polling.
 
 ---
 
+## Read timecode in a browser
+
+**→ [hugesesame.github.io/adrienne-usbtc](https://hugesesame.github.io/adrienne-usbtc/)**
+
+A single self-contained HTML page that reads the device over WebUSB and shows
+the timecode full screen. Nothing to install, no driver, no server — open the
+page, click **Connect Device**, pick the reader.
+
+- Real measured frame rate to two decimals, so 29.97 is distinguishable from
+  30.00 rather than guessed from the frame numbering.
+- Drop frame written the conventional way, `01:23:45;12`.
+- Signal presence taken from the hardware lock bit rather than inferred from a
+  timeout, so it reacts immediately.
+
+Requires **Chrome or Edge**. Safari does not support WebUSB and Firefox has
+declined to implement it, so neither will work and that is unlikely to change.
+
+The page is [`docs/index.html`](docs/index.html), and
+[`docs/diag.html`](docs/diag.html) is a diagnostic page for when the device will
+not connect. Both are plain static files with no dependencies — download them
+and open them from disk if you would rather not load a page over the network.
+Chrome treats `file://` as a secure context, so WebUSB works there too.
+
+What makes this possible is the same property that made the vendor's Windows
+driver necessary in the first place: the device is vendor-specific class, so no
+kernel driver claims it and the browser can reach it directly. On Windows the
+same page needs no WinUSB or Zadig shim either.
+
+### Writing your own WebUSB client
+
+Three things will cost you an evening if you do not know them:
+
+- `selectAlternateInterface(0, 1)` is required, for the reason in
+  [pitfall 1](#pitfall-1--the-device-starts-with-no-endpoints).
+- So is the warm-up transaction from
+  [pitfall 2](#pitfall-2--the-first-transaction-returns-nothing). Without it the
+  first register read comes back as an empty packet and the connection looks
+  like it failed.
+- **An empty device chooser is usually correct behaviour, not a bug.** Chrome
+  remembers permission per origin, and stops offering a device the origin has
+  already been granted. Call `navigator.usb.getDevices()` and reuse the granted
+  handle; only fall back to `requestDevice()` when there is none. Note also that
+  `file://` and `http://localhost:8000` are separate origins with separate
+  grants.
+
+---
+
 ## Usage
 
 ### Requirements
@@ -490,27 +541,10 @@ type, offsets 23–26 the data length, and bit 0 of offset 16 is the direction
 
 ## Roadmap
 
-**WebUSB — confirmed working.** Because the device is vendor-specific class,
-Chrome reaches it directly with no driver shim: no WinUSB, no Zadig. A single
-self-contained HTML file really does work as a hardware timecode display; one
-has been built and run against this device on macOS. The absence of a macOS
-driver, the thing that made this project necessary, is exactly what makes the
-browser path frictionless.
-
-Three things worth knowing before you build one:
-
-- `selectAlternateInterface(0, 1)` is required, for the reason in pitfall 1.
-- The warm-up transaction from pitfall 2 is required too. Without it the first
-  register read returns an empty packet and the connection appears to fail.
-- A `file://` page is enough — Chrome treats it as a potentially trustworthy
-  origin, so WebUSB is available with no server at all. Note that permission is
-  remembered per origin, so `file://` and `http://localhost:8000` are granted
-  separately; and once an origin has been granted a device, that device stops
-  appearing in the chooser. Call `navigator.usb.getDevices()` and reuse the
-  granted handle rather than prompting again, or the app will look broken.
-
 **Rust / C / Node bindings.** The protocol is small enough to reimplement in an
 afternoon in any language with libusb bindings.
+
+**VITC and Line 21.** The hardware is here; an NTSC source to feed it is not.
 
 ---
 

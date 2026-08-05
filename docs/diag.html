@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebUSB Diagnostics — AEC USB-TC</title>
+<style>
+  :root {
+    --primary: #0066cc;
+    --primary-focus: #0071e3;
+    --primary-on-dark: #2997ff;
+    --surface-black: #000000;
+    --surface-tile-1: #272729;
+    --on-dark: #ffffff;
+    --body-muted: #cccccc;
+    --ink-muted-48: #7a7a7a;
+    --font-display: -apple-system, "SF Pro Display", system-ui, sans-serif;
+    --font-text: -apple-system, "SF Pro Text", system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { min-height: 100%; background: var(--surface-tile-1); font-family: var(--font-text); -webkit-font-smoothing: antialiased; }
+
+  .global-nav {
+    height: 44px; background: var(--surface-black); color: var(--on-dark);
+    display: flex; align-items: center; padding: 0 20px;
+    font-size: 12px; letter-spacing: -0.12px;
+  }
+
+  main { max-width: 980px; margin: 0 auto; padding: 80px 24px; color: var(--on-dark); }
+
+  h1 {
+    font-family: var(--font-display); font-size: 40px; font-weight: 600;
+    line-height: 1.10; letter-spacing: -0.01em; margin-bottom: 17px;
+  }
+  p.lead {
+    font-size: 17px; line-height: 1.47; letter-spacing: -0.374px;
+    color: var(--body-muted); margin-bottom: 48px;
+  }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 17px; margin-bottom: 48px; }
+  button {
+    font-family: var(--font-text); font-size: 17px; font-weight: 400;
+    line-height: 1.47; letter-spacing: -0.374px;
+    padding: 11px 22px; border-radius: 9999px; border: 1px solid transparent;
+    cursor: pointer; transition: transform 100ms ease;
+  }
+  button:active { transform: scale(0.95); }
+  button:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-ghost { background: transparent; color: var(--primary-on-dark); border-color: var(--primary-on-dark); }
+
+  pre {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; line-height: 1.6; color: var(--body-muted);
+    background: #1d1d1f; border-radius: 18px; padding: 24px;
+    overflow-x: auto; white-space: pre; margin-bottom: 24px;
+  }
+  pre b { color: var(--on-dark); font-weight: 600; }
+
+  .note { font-size: 12px; line-height: 1.6; letter-spacing: -0.12px; color: var(--ink-muted-48); }
+  .note a { color: var(--primary-on-dark); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<nav class="global-nav">WebUSB Diagnostics — AEC USB-TC</nav>
+
+<main>
+  <h1>What can Chrome actually see?</h1>
+  <p class="lead">
+    If the reader will not connect, these checks narrow down where it is being
+    lost — the filter, Chrome's USB backend, or the device itself. The USB-TC
+    reports idVendor <code>0xAECB</code>, idProduct <code>0x6600</code>.
+  </p>
+
+  <div class="actions">
+    <button class="btn-primary" id="btnAll">Scan — accept all devices</button>
+    <button class="btn-ghost" id="btnFiltered">Scan — filtered (0xAECB)</button>
+    <button class="btn-ghost" id="btnGranted">List already-granted</button>
+  </div>
+
+  <pre id="out">Ready.</pre>
+
+  <p class="note">
+    Pick the AEC USB-TC in the chooser if it appears. The product string differs
+    between models — <b>Time Code Reader</b> on LTC-only units,
+    <b>Time Code and L21 Data Reader</b> on video-capable ones.
+  </p>
+
+  <p class="note">
+    <b>An empty chooser is usually normal.</b> Once an origin has been granted a
+    device, Chrome stops offering it; use <i>List already-granted</i> to confirm.
+    If “accept all devices” also shows nothing, the device is not reaching
+    Chrome's USB backend at all — replug it, and prefer a direct port over a hub.
+  </p>
+
+  <p class="note">
+    Part of <a href="https://github.com/hugesesame/adrienne-usbtc">adrienne-usbtc</a>.
+    <a href="index.html">Back to the reader</a>.
+  </p>
+</main>
+
+<script>
+'use strict';
+
+const out = document.getElementById('out');
+const lines = [];
+function log(s = '') { lines.push(s); out.textContent = lines.join('\n'); }
+const h4 = n => '0x' + n.toString(16).toUpperCase().padStart(4, '0');
+const h2 = n => '0x' + n.toString(16).toUpperCase().padStart(2, '0');
+
+function describe(d) {
+  log(`  productName  : ${d.productName || '(none)'}`);
+  log(`  manufacturer : ${d.manufacturerName || '(none)'}`);
+  log(`  serialNumber : ${d.serialNumber || '(none)'}`);
+  log(`  vendorId     : ${h4(d.vendorId)} (${d.vendorId})`);
+  log(`  productId    : ${h4(d.productId)} (${d.productId})`);
+  log(`  deviceClass  : ${h2(d.deviceClass)} / sub ${h2(d.deviceSubclass)} / proto ${h2(d.deviceProtocol)}`);
+  log(`  usbVersion   : ${d.usbVersionMajor}.${d.usbVersionMinor}.${d.usbVersionSubminor}`);
+  log(`  opened       : ${d.opened}`);
+  for (const cfg of d.configurations) {
+    log(`  configuration ${cfg.configurationValue} "${cfg.configurationName || ''}"`);
+    for (const itf of cfg.interfaces) {
+      for (const alt of itf.alternates) {
+        const eps = alt.endpoints
+          .map(e => `${e.direction}${e.endpointNumber}(${e.type},${e.packetSize}B)`)
+          .join(' ') || 'none';
+        log(`    iface ${itf.interfaceNumber} alt ${alt.alternateSetting} ` +
+            `class ${h2(alt.interfaceClass)} — endpoints: ${eps}`);
+      }
+    }
+  }
+}
+
+async function scan(options, label) {
+  lines.length = 0;
+  log(`> ${label}`);
+  log();
+  try {
+    const d = await navigator.usb.requestDevice(options);
+    log('Chooser returned a device:');
+    describe(d);
+    log();
+    if (d.vendorId === 0xAECB && d.productId === 0x6600) {
+      log('MATCH — this is the USB-TC. The main app should work with it.');
+    } else {
+      log('This is NOT the USB-TC.');
+    }
+  } catch (err) {
+    log(`${err.name}: ${err.message}`);
+    log();
+    if (err.name === 'NotFoundError') {
+      log('Nothing was selected — either the list was empty or you cancelled.');
+    }
+  }
+}
+
+document.getElementById('btnAll').addEventListener('click',
+  () => scan({ acceptAllDevices: true }, 'requestDevice({ acceptAllDevices: true })'));
+
+document.getElementById('btnFiltered').addEventListener('click',
+  () => scan({ filters: [{ vendorId: 0xAECB }] }, 'requestDevice({ filters: [{ vendorId: 0xAECB }] })'));
+
+document.getElementById('btnGranted').addEventListener('click', async () => {
+  lines.length = 0;
+  log('> navigator.usb.getDevices()');
+  log();
+  const list = await navigator.usb.getDevices();
+  if (!list.length) { log('No devices have been granted to this origin yet.'); return; }
+  list.forEach((d, i) => { log(`[${i}]`); describe(d); log(); });
+});
+
+// Environment summary on load
+lines.length = 0;
+log('> environment');
+log();
+log(`  origin          : ${location.origin}`);
+log(`  isSecureContext : ${window.isSecureContext}`);
+log(`  navigator.usb   : ${typeof navigator.usb}`);
+log(`  userAgent       : ${navigator.userAgent}`);
+log();
+log('Click a scan button above.');
+</script>
+</body>
+</html>

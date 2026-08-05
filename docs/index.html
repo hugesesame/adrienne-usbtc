@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LTC Reader — AEC USB-TC</title>
+<style>
+  :root {
+    --primary:            #0066cc;
+    --primary-focus:      #0071e3;
+    --primary-on-dark:    #2997ff;
+    --surface-black:      #000000;
+    --surface-tile-1:     #272729;
+    --surface-tile-3:     #252527;
+    --on-dark:            #ffffff;
+    --body-muted:         #cccccc;
+    --ink-muted-48:       #7a7a7a;
+
+    --font-display: -apple-system, "SF Pro Display", system-ui, BlinkMacSystemFont, sans-serif;
+    --font-text:    -apple-system, "SF Pro Text", system-ui, BlinkMacSystemFont, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: var(--surface-tile-1);
+    font-family: var(--font-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- global-nav ---------- */
+  .global-nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 44px;
+    background: var(--surface-black);
+    color: var(--on-dark);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: -0.12px;
+  }
+  .global-nav .title { opacity: 0.92; }
+  .global-nav .state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--ink-muted-48);
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: var(--ink-muted-48);
+    transition: background 200ms ease;
+  }
+  body[data-state="live"]  .dot   { background: var(--on-dark); }
+  body[data-state="live"]  .state { color: var(--body-muted); }
+  body[data-state="stale"] .dot   { background: var(--ink-muted-48); }
+
+  /* ---------- product tile (dark) ---------- */
+  .tile {
+    min-height: calc(100dvh - 44px);
+    padding: 80px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+    text-align: center;
+  }
+
+  .readout { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+
+  .timecode {
+    font-family: var(--font-display);
+    font-size: clamp(2.75rem, min(15.5vw, 27vh), 14rem);
+    font-weight: 600;
+    line-height: 1.07;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    white-space: nowrap;
+    color: var(--ink-muted-48);
+    transition: color 160ms ease;
+  }
+  body[data-state="live"] .timecode { color: var(--on-dark); }
+
+  .tagline {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 600;
+    line-height: 1.19;
+    letter-spacing: 0.231px;
+    color: var(--ink-muted-48);
+    min-height: 25px;
+    transition: color 160ms ease;
+  }
+  body[data-state="live"] .tagline { color: var(--body-muted); }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 32px;
+    font-size: 17px;
+    line-height: 1.47;
+    letter-spacing: -0.374px;
+    color: var(--ink-muted-48);
+    font-variant-numeric: tabular-nums;
+  }
+  .meta b { font-weight: 600; color: var(--body-muted); }
+
+  /* ---------- buttons ---------- */
+  .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 17px; }
+
+  button {
+    font-family: var(--font-text);
+    font-size: 17px;
+    font-weight: 400;
+    line-height: 1.47;
+    letter-spacing: -0.374px;
+    padding: 11px 22px;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: transform 100ms ease;
+  }
+  button:active { transform: scale(0.95); }
+  button:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; }
+  button[disabled] { color: var(--ink-muted-48); cursor: default; transform: none; }
+
+  .btn-primary { background: var(--primary); color: #ffffff; }
+  .btn-primary[disabled] { background: #3a3a3c; }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--primary-on-dark);
+    border-color: var(--primary-on-dark);
+  }
+  .btn-ghost[disabled] { border-color: #4a4a4c; }
+
+  /* ---------- footer note ---------- */
+  .note {
+    max-width: 560px;
+    font-size: 12px;
+    line-height: 1.6;
+    letter-spacing: -0.12px;
+    color: var(--ink-muted-48);
+  }
+  .note a { color: var(--primary-on-dark); text-decoration: none; }
+  .note b { color: var(--body-muted); font-weight: 600; }
+  .colophon { margin-top: -32px; }
+  .note code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--body-muted);
+  }
+
+  /* ---------- fullscreen: readout only ---------- */
+  :fullscreen .global-nav,
+  :fullscreen .actions,
+  :fullscreen .note { display: none; }
+  :fullscreen .tile { min-height: 100dvh; }
+
+  @media (max-width: 640px) {
+    .tile { padding: 48px 20px; gap: 32px; }
+    .tagline { font-size: 17px; }
+  }
+</style>
+</head>
+<body data-state="idle">
+
+<nav class="global-nav">
+  <span class="title">LTC Reader — AEC USB-TC</span>
+  <span class="state"><span class="dot"></span><span id="stateText">Not connected</span></span>
+</nav>
+
+<main class="tile">
+  <div class="readout">
+    <div class="timecode" id="timecode">--:--:--:--</div>
+    <div class="tagline" id="tagline">Connect a device to begin</div>
+    <div class="meta">
+      <span>FPS <b id="mFps">—</b></span>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="btnConnect">Connect Device</button>
+    <button class="btn-ghost" id="btnFull" disabled>Full Screen</button>
+  </div>
+
+  <p class="note" id="note">
+    Requires Chrome or Edge — WebUSB is not available in Safari or Firefox.
+    Nothing is installed and nothing leaves your machine; the page talks to the
+    reader directly.
+  </p>
+
+  <p class="note colophon">
+    Reads an <b>Adrienne Electronics USB-TC</b> over WebUSB.
+    Protocol notes, a Python reader and the source for this page:
+    <a href="https://github.com/hugesesame/adrienne-usbtc">github.com/hugesesame/adrienne-usbtc</a>.
+    Provided as-is, with no warranty and no promise of support.
+    <a href="diag.html">Diagnostics</a> if the device will not connect.
+  </p>
+</main>
+
+<script>
+'use strict';
+
+const VID = 0xAECB, PID = 0x6600;
+const IFACE = 0, ALT = 1, EP = 1;
+
+// The device exposes a 128-byte register space at 0x00-0x7F.
+//   read :  74 <addr>        -> echo, then mem[addr..addr+3], then 4 zero pad bytes
+//   write:  61 <addr> <val>
+const OP_READ  = 0x74;
+const OP_WRITE = 0x61;
+
+const ADDR_ID       = 0x00;  // 0x00-0x01 VID, 0x02-0x03 PID
+const ADDR_FIRMWARE = 0x04;  // 0x06-0x07 hold ASCII "B1"
+const ADDR_CAPS     = 0x08;  // 0x08-0x0B capability/model info, undecoded
+const ADDR_STATUS   = 0x0C;  // bit 4 set while LTC is being received
+const ADDR_TIMECODE = 0x10;  // frame, sec, min, hour (packed BCD)
+const ADDR_ENABLE   = 0x2C;  // write 0x02 to enable reading
+
+const STATUS_LOCKED = 0x10;  // 0x0C bit 4
+
+const ERR_BAD_LENGTH = 0xF0; // command length was wrong
+const ERR_BAD_ADDR   = 0xF5; // address out of range
+
+// The timecode bytes are the raw SMPTE words: the BCD digits share each byte
+// with flag bits, so they must be masked off before decoding. Without this a
+// drop-frame source reads 0x40|BCD(29) = 0x69 as frame "69".
+const MASK_FRAMES  = 0x3F;
+const MASK_SECONDS = 0x7F;
+const MASK_MINUTES = 0x7F;
+const MASK_HOURS   = 0x3F;
+const FLAG_DROP_FRAME  = 0x40;  // frames byte, bit 6
+const FLAG_COLOR_FRAME = 0x80;  // frames byte, bit 7
+
+const FPS_WINDOW  = 10000;   // ms — rolling window the frame rate is measured over
+const FPS_MIN_SPAN = 3000;   // ms — shortest span that gives a usable reading
+
+const el = {
+  body:      document.body,
+  timecode:  document.getElementById('timecode'),
+  tagline:   document.getElementById('tagline'),
+  stateText: document.getElementById('stateText'),
+  fps:       document.getElementById('mFps'),
+  connect:   document.getElementById('btnConnect'),
+  full:      document.getElementById('btnFull'),
+  note:      document.getElementById('note'),
+};
+
+let device = null;
+let running = false;
+let locked = false;
+let frameLog = [];   // {t, ff} — samples used to infer the frame rate
+let view = { tc: '--:--:--:--', fps: '—', drop: false };
+
+const hex = b => b.toString(16).toUpperCase().padStart(2, '0');
+const h2  = b => '0x' + hex(b);
+const pad = n => String(n).padStart(2, '0');
+
+// Packed BCD. Returns null if either nibble is out of range.
+function bcd(b) {
+  const hi = b >> 4, lo = b & 0x0F;
+  return (hi > 9 || lo > 9) ? null : hi * 10 + lo;
+}
+
+async function transact(bytes) {
+  const out = await device.transferOut(EP, new Uint8Array(bytes));
+  if (out.status !== 'ok') throw new Error('transferOut: ' + out.status);
+  const inp = await device.transferIn(EP, 16);
+  if (inp.status !== 'ok') throw new Error('transferIn: ' + inp.status);
+  return new Uint8Array(inp.data.buffer, inp.data.byteOffset, inp.data.byteLength);
+}
+
+// Read the 4 bytes at addr. Throws on a short, empty or error reply.
+async function readReg(addr) {
+  const r = await transact([OP_READ, addr]);
+  if (r.length < 6) throw new Error(`short reply from ${h2(addr)} (${r.length} bytes)`);
+  if (r[0] === ERR_BAD_LENGTH) throw new Error('device rejected the command length');
+  if (r[0] === ERR_BAD_ADDR) throw new Error(`address ${h2(addr)} is out of range`);
+  if (r[0] !== OP_READ || r[1] !== addr) {
+    throw new Error(`unexpected reply: ${[...r].map(hex).join(' ')}`);
+  }
+  return r.subarray(2, 6);
+}
+
+async function writeReg(addr, value) {
+  await transact([OP_WRITE, addr, value]);
+}
+
+async function openDevice(dev) {
+  device = dev;
+  await device.open();
+  if (!device.configuration) await device.selectConfiguration(1);
+  await device.claimInterface(IFACE);
+  // alt 0 exposes no endpoints — without this, 0x81 is invisible
+  await device.selectAlternateInterface(IFACE, ALT);
+
+  // The first transaction after enumeration comes back empty (or not at all).
+  // The stock Windows driver sent its identify command three times for this
+  // reason. Burn one transaction and ignore whatever it returns.
+  try { await transact([OP_READ, ADDR_ID]); } catch (_) {}
+
+  const id = await readReg(ADDR_ID);
+  const vid = id[0] | (id[1] << 8);
+  const pid = id[2] | (id[3] << 8);
+  if (vid !== VID || pid !== PID) {
+    throw new Error(`not a USB-TC: ${h2(vid)}:${h2(pid)}`);
+  }
+
+  // Not shown on screen, but worth having in the console: the firmware revision
+  // confirms the register reads are sane, and CAPS is still undecoded.
+  const fw   = await readReg(ADDR_FIRMWARE);   // 0x06-0x07 within this window
+  const caps = await readReg(ADDR_CAPS);
+  console.info(`USB-TC firmware ${String.fromCharCode(fw[2], fw[3])}, ` +
+               `caps ${[...caps].map(hex).join(' ')}`);
+
+  await writeReg(ADDR_ENABLE, 0x02);
+
+  el.connect.textContent = 'Disconnect';
+  el.full.disabled = false;
+  el.note.textContent = 'Polling. Feed LTC into the reader and the count will run.';
+  locked = false;
+  frameLog = [];
+  running = true;
+  poll();
+  render();
+}
+
+// Convert a timecode sample to the number of frames that have actually gone by
+// since 00:00:00:00. For drop-frame the label skips two numbers a minute (nine
+// minutes in ten), so those skipped labels have to be subtracted or the count
+// would run fast — a drop-frame source would measure 30.00 instead of 29.97.
+function frameNumber(s, nominal) {
+  const minutes = s.hh * 60 + s.mm;
+  let n = (minutes * 60 + s.ss) * nominal + s.ff;
+  if (s.drop && nominal === 30) n -= 2 * (minutes - Math.floor(minutes / 10));
+  return n;
+}
+
+// Measure the real frame rate, so 29.97 can be told apart from 30.00.
+//
+// The nominal rate — frame labels per timecode second — comes from the highest
+// frame value seen: 30, 25 or 24. Dividing the frames that have gone by by the
+// wall-clock time they took gives the true rate.
+//
+// The frame count is a staircase, so differencing the two endpoints would only
+// be accurate to plus or minus one frame. Fitting a line through every sample
+// in the window brings the error well under 0.01 fps.
+function measureRate() {
+  if (frameLog.length < 30) return null;
+  const first = frameLog[0], last = frameLog[frameLog.length - 1];
+  if (last.t - first.t < FPS_MIN_SPAN) return null;
+
+  const nominal = frameLog.reduce((a, s) => Math.max(a, s.ff), 0) + 1;
+  const base = frameNumber(first, nominal);
+
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const s of frameLog) {
+    const x = (s.t - first.t) / 1000;
+    const y = frameNumber(s, nominal) - base;
+    n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  const denom = n * sxx - sx * sx;
+  if (denom === 0) return null;
+
+  const slope = (n * sxy - sx * sy) / denom;
+  return (isFinite(slope) && slope > 1 && slope < 100) ? slope : null;
+}
+
+async function poll() {
+  while (running && device) {
+    try {
+      // 0x0C bit 4 reports the lock state directly — no need to watch for the
+      // timecode to stop changing. The device holds its last value when the
+      // signal goes away, so the value alone cannot tell us anything.
+      const status = await readReg(ADDR_STATUS);
+      locked = Boolean(status[0] & STATUS_LOCKED);
+
+      const tc = await readReg(ADDR_TIMECODE);
+      const ff = bcd(tc[0] & MASK_FRAMES);
+      const ss = bcd(tc[1] & MASK_SECONDS);
+      const mm = bcd(tc[2] & MASK_MINUTES);
+      const hh = bcd(tc[3] & MASK_HOURS);
+      if (ff === null || ss === null || mm === null || hh === null) continue;
+
+      const drop = Boolean(tc[0] & FLAG_DROP_FRAME);
+      const now  = performance.now();
+
+      // Drop the history whenever the source jumps (playback restart, seek) —
+      // the rate is measured by fitting a line through it, so a discontinuity
+      // would poison the result.
+      const prev = frameLog[frameLog.length - 1];
+      if (prev && (prev.hh !== hh || prev.mm !== mm)) {
+        if (Math.abs(hh * 3600 + mm * 60 - (prev.hh * 3600 + prev.mm * 60)) > 60) frameLog = [];
+      }
+      if (!locked) frameLog = [];
+
+      frameLog.push({ t: now, hh, mm, ss, ff, drop });
+      while (frameLog.length && now - frameLog[0].t > FPS_WINDOW) frameLog.shift();
+
+      const rate = measureRate();
+      view = {
+        tc: `${pad(hh)}:${pad(mm)}:${pad(ss)}${drop ? ';' : ':'}${pad(ff)}`,
+        fps: rate === null ? (locked ? view.fps : '—') : rate.toFixed(2),
+        drop,
+      };
+    } catch (err) {
+      if (!running) return;
+      el.note.textContent = 'Read error: ' + err.message;
+      await new Promise(res => setTimeout(res, 200));
+    }
+  }
+}
+
+function render() {
+  if (running) {
+    el.body.dataset.state = locked ? 'live' : 'stale';
+    el.timecode.textContent  = view.tc;
+    el.tagline.textContent   = locked ? 'RECEIVING LTC' : 'NO SIGNAL';
+    el.stateText.textContent = locked ? 'Receiving' : 'No signal';
+    el.fps.textContent = (locked ? view.fps : '—') + (view.drop ? ' DF' : '');
+    requestAnimationFrame(render);
+  }
+}
+
+async function disconnect() {
+  running = false;
+  const dev = device;
+  device = null;
+  if (dev) {
+    try { await dev.releaseInterface(IFACE); } catch (_) {}
+    try { await dev.close(); } catch (_) {}
+  }
+  locked = false;
+  el.body.dataset.state = 'idle';
+  el.timecode.textContent  = '--:--:--:--';
+  el.tagline.textContent   = 'Connect a device to begin';
+  el.stateText.textContent = 'Not connected';
+  el.fps.textContent = '—';
+  el.connect.textContent = 'Connect Device';
+  el.full.disabled = true;
+  view = { tc: '--:--:--:--', fps: '—', drop: false };
+}
+
+function explain(err) {
+  const msg = `${err.name}: ${err.message}`;
+  if (/claim|access denied|busy|in use|denied/i.test(err.message)) {
+    return msg + ' — the reader is held by something else. Close other tabs of this page ' +
+                 'and any running usbtc_reader.py, then try again.';
+  }
+  return msg;
+}
+
+// Once this origin has permission, the device no longer appears in the chooser.
+// Always reuse the granted handle first; only prompt when there is none.
+async function pickDevice() {
+  const granted = await navigator.usb.getDevices();
+  const known = granted.find(d => d.vendorId === VID && d.productId === PID);
+  if (known) return known;
+  return navigator.usb.requestDevice({ filters: [{ vendorId: VID, productId: PID }] });
+}
+
+el.connect.addEventListener('click', async () => {
+  if (device) { await disconnect(); return; }
+  el.note.textContent = 'Connecting…';
+  try {
+    await openDevice(await pickDevice());
+  } catch (err) {
+    const msg = err.name === 'NotFoundError'
+      ? 'No device selected. An empty chooser usually means this page already has ' +
+        'permission — reload, or close other tabs holding the reader.'
+      : explain(err);
+    await disconnect();
+    el.note.textContent = msg;
+  }
+});
+
+el.full.addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+});
+
+if (navigator.usb) {
+  navigator.usb.addEventListener('disconnect', ev => {
+    if (device && ev.device === device) {
+      disconnect();
+      el.note.textContent = 'Device was unplugged.';
+    }
+  });
+  // Release the interface on reload / tab close, otherwise the next load
+  // finds the reader still claimed by the previous page.
+  window.addEventListener('pagehide', () => {
+    running = false;
+    if (device) {
+      try { device.releaseInterface(IFACE); } catch (_) {}
+      try { device.close(); } catch (_) {}
+      device = null;
+    }
+  });
+
+  // Reopen automatically if permission was already granted
+  navigator.usb.getDevices().then(list => {
+    const dev = list.find(d => d.vendorId === VID && d.productId === PID);
+    if (!dev) return;
+    openDevice(dev).catch(async err => {
+      const msg = explain(err);
+      await disconnect();
+      el.note.textContent = msg;
+    });
+  });
+} else {
+  el.connect.disabled = true;
+  el.note.textContent = 'This browser does not support WebUSB. Use Chrome or Edge.';
+}
+</script>
+</body>
+</html>
